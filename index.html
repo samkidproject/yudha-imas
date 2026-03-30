@@ -27,43 +27,55 @@
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
         const auth = getAuth(app);
-        const weddingAppId = "wedding-yudha3726"; 
+        const appId = "wedding-yudha3726"; 
 
-        let currentUser = null;
+        let user = null;
         let unsubscribeWishes = null;
         let isAdminView = false;
 
         const urlParams = new URLSearchParams(window.location.search);
         const guestName = urlParams.get('to');
 
-        async function initAuth() {
+        // Initial Auth Setup
+        const initAuth = async () => {
             try {
+                // Rule 3: Auth before queries
                 await signInAnonymously(auth);
-            } catch (err) { console.error("Auth Error:", err); }
-            onAuthStateChanged(auth, (user) => {
-                if (user) {
-                    currentUser = user;
-                    setupFirestoreListeners();
-                    if (guestName) {
-                        const guestEl = document.getElementById('guest-target');
-                        if (guestEl) guestEl.innerText = guestName;
-                    }
+            } catch (err) { 
+                console.error("Auth Error:", err); 
+            }
+        };
+        initAuth();
+
+        onAuthStateChanged(auth, (u) => {
+            user = u;
+            if (user) {
+                setupFirestoreListeners();
+                if (guestName) {
+                    const guestEl = document.getElementById('guest-target');
+                    if (guestEl) guestEl.innerText = guestName;
                 }
-            });
-        }
+            }
+        });
 
         function setupFirestoreListeners() {
-            if (!currentUser) return;
+            if (!user) return;
             if (unsubscribeWishes) unsubscribeWishes();
-            const wishesCol = collection(db, 'artifacts', weddingAppId, 'public', 'data', 'wishes');
-            const q = query(wishesCol);
+            
+            // Rule 1: Strict Paths
+            const wishesCol = collection(db, 'artifacts', appId, 'public', 'data', 'wishes');
+            const q = query(wishesCol); // Rule 2: Simple query (no orderBy for now to avoid index errors)
+            
             unsubscribeWishes = onSnapshot(q, (snapshot) => {
                 const wishes = [];
                 snapshot.forEach((doc) => { wishes.push({ id: doc.id, ...doc.data() }); });
+                // Sort in memory (Rule 2)
                 wishes.sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
                 renderWishes(wishes);
                 renderAdminWishes(wishes);
-            }, (error) => { console.error("Firestore Error:", error); });
+            }, (error) => { 
+                console.error("Firestore Listen Error:", error); 
+            });
         }
 
         function renderWishes(wishes) {
@@ -99,24 +111,47 @@
         }
 
         window.deleteWish = async (id) => {
+            if (!user) return;
             if (!confirm("Hapus ucapan ini?")) return;
             try {
-                await deleteDoc(doc(db, 'artifacts', weddingAppId, 'public', 'data', 'wishes', id));
+                await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'wishes', id));
                 window.showToast("Terhapus");
-            } catch (e) { window.showToast("Gagal"); }
+            } catch (e) { 
+                console.error(e);
+                window.showToast("Gagal"); 
+            }
         };
 
         window.sendWish = async () => {
+            if (!user) {
+                window.showToast("Menghubungkan ke server...");
+                return;
+            }
             const nameEl = document.getElementById('guest-name-input');
             const msgEl = document.getElementById('guest-msg-input');
             const statusEl = document.getElementById('guest-status-input');
-            if(!nameEl.value || !msgEl.value) { window.showToast("Isi nama & pesan"); return; }
+            
+            if(!nameEl.value || !msgEl.value) { 
+                window.showToast("Isi nama & pesan"); 
+                return; 
+            }
+
             try {
-                const wishesCol = collection(db, 'artifacts', weddingAppId, 'public', 'data', 'wishes');
-                await addDoc(wishesCol, { name: nameEl.value, message: msgEl.value, status: statusEl.value, timestamp: serverTimestamp() });
-                nameEl.value = ''; msgEl.value = '';
+                const wishesCol = collection(db, 'artifacts', appId, 'public', 'data', 'wishes');
+                await addDoc(wishesCol, { 
+                    name: nameEl.value, 
+                    message: msgEl.value, 
+                    status: statusEl.value, 
+                    timestamp: serverTimestamp(),
+                    userId: user.uid 
+                });
+                nameEl.value = ''; 
+                msgEl.value = '';
                 window.showToast("Terkirim!");
-            } catch (e) { window.showToast("Gagal kirim"); }
+            } catch (e) { 
+                console.error("Save Error:", e);
+                window.showToast("Gagal kirim"); 
+            }
         };
 
         // Salin Rekening
@@ -165,9 +200,8 @@
 
                 if (distance < 0) {
                     clearInterval(timer);
-                    const msg = "<p class='col-span-4 font-bold text-[#D4AF37] text-[10px]'>ACARA SEDANG BERLANGSUNG</p>";
-                    const ids = ["countdown-display", "hero-countdown-display", "overlay-countdown-display"];
-                    ids.forEach(id => {
+                    const msg = "<p class='col-span-4 font-bold text-[#D4AF37] text-[10px] uppercase'>Acara Sedang Berlangsung</p>";
+                    ["countdown-display", "hero-countdown-display", "overlay-countdown-display"].forEach(id => {
                         const el = document.getElementById(id);
                         if (el) el.innerHTML = msg;
                     });
@@ -179,29 +213,19 @@
                 const minutes = Math.floor((distance % (1000 * 60 * 60)) / (1000 * 60));
                 const seconds = Math.floor((distance % (1000 * 60)) / 1000);
 
-                // Update Main Section
-                if(document.getElementById("cd-days")) document.getElementById("cd-days").innerText = days;
-                if(document.getElementById("cd-hours")) document.getElementById("cd-hours").innerText = hours;
-                if(document.getElementById("cd-minutes")) document.getElementById("cd-minutes").innerText = minutes;
-                if(document.getElementById("cd-seconds")) document.getElementById("cd-seconds").innerText = seconds;
+                const update = (prefix, val) => {
+                    const el = document.getElementById(prefix);
+                    if(el) el.innerText = val;
+                };
 
-                // Update Hero Section
-                if(document.getElementById("h-cd-days")) document.getElementById("h-cd-days").innerText = days;
-                if(document.getElementById("h-cd-hours")) document.getElementById("h-cd-hours").innerText = hours;
-                if(document.getElementById("h-cd-minutes")) document.getElementById("h-cd-minutes").innerText = minutes;
-                if(document.getElementById("h-cd-seconds")) document.getElementById("h-cd-seconds").innerText = seconds;
-
-                // Update Overlay Section
-                if(document.getElementById("ov-cd-days")) document.getElementById("ov-cd-days").innerText = days;
-                if(document.getElementById("ov-cd-hours")) document.getElementById("ov-cd-hours").innerText = hours;
-                if(document.getElementById("ov-cd-minutes")) document.getElementById("ov-cd-minutes").innerText = minutes;
-                if(document.getElementById("ov-cd-seconds")) document.getElementById("ov-cd-seconds").innerText = seconds;
+                update("cd-days", days); update("cd-hours", hours); update("cd-minutes", minutes); update("cd-seconds", seconds);
+                update("h-cd-days", days); update("h-cd-hours", hours); update("h-cd-minutes", minutes); update("h-cd-seconds", seconds);
+                update("ov-cd-days", days); update("ov-cd-hours", hours); update("ov-cd-minutes", minutes); update("ov-cd-seconds", seconds);
             }, 1000);
         }
 
         window.closeAdmin = () => toggleAdminPage();
         window.onload = () => {
-            initAuth();
             updateAllCountdowns();
         };
     </script>
@@ -285,7 +309,6 @@
     <!-- MAIN CONTENT -->
     <div id="main-invitation-container">
         <div id="main-content" class="max-w-md mx-auto relative bg-white min-h-screen shadow-2xl">
-            <!-- Hero (Sama dengan Welcome Overlay untuk transisi halus) -->
             <section class="h-[100vh] flex flex-col items-center justify-center px-6 bg-[#1e3a8a] text-center relative overflow-hidden">
                 <div class="animate__animated animate__fadeInDown animate__slow">
                     <p class="text-[9px] tracking-[0.5em] text-[#D4AF37] uppercase font-bold mb-2">Undangan Pernikahan</p>
@@ -316,13 +339,11 @@
                 </div>
             </section>
 
-            <!-- Quotes & Kata Pembuka -->
             <section class="py-20 px-8 text-center reveal">
                 <div class="p-10 rounded-[40px] bg-white shadow-xl border border-[#D4AF37]/20">
                     <p class="font-serif italic text-[#1e3a8a] text-sm mb-6 leading-relaxed">"Dan di antara tanda-tanda-Nya ialah Dia menciptakan pasangan-pasangan untukmu agar kamu merasa tenteram..."</p>
                     <p class="text-[10px] font-bold text-[#D4AF37] uppercase tracking-widest mb-10">— QS. Ar-Rum: 21</p>
                     
-                    <!-- Kata Pembuka -->
                     <div class="space-y-4 pt-4 border-t border-gray-100">
                         <p class="text-[10px] font-bold text-[#1e3a8a] uppercase tracking-[0.2em]">Assalamu’alaikum Warahmatullahi Wabarakatuh</p>
                         <p class="text-xs text-gray-600 leading-relaxed">Maha Suci Allah yang telah menciptakan mahluk-Nya berpasang-pasangan. Dengan memohon rahmat dan ridho Allah SWT, kami bermaksud mengundang Bapak/Ibu/Saudara/i untuk menghadiri acara pernikahan kami:</p>
@@ -330,22 +351,20 @@
                 </div>
             </section>
 
-            <!-- Mempelai -->
             <section class="py-20 px-8 text-center reveal">
                 <div class="space-y-12">
                     <div>
-                        <h2 class="font-accent text-5xl text-[#1e3a8a]">Yudha Nugroho</h2>
+                        <h2 class="font-accent text-5xl text-[#1e3a8a]">Yudha Nugroho,S.E</h2>
                         <p class="text-[10px] text-gray-500 mt-2 font-bold uppercase tracking-widest">Putra Bapak Sunarto & Ibu Supriyani</p>
                     </div>
                     <div class="font-accent text-3xl text-[#D4AF37]">&</div>
                     <div>
-                        <h2 class="font-accent text-5xl text-[#1e3a8a]">Siti Masliyah</h2>
-                        <p class="text-[10px] text-gray-500 mt-2 font-bold uppercase tracking-widest">Putri Bapak Ahmad & Ibu Siti Masliyah</p>
+                        <h2 class="font-accent text-5xl text-[#1e3a8a]">Siti Masliyah,S.H</h2>
+                        <p class="text-[10px] text-gray-500 mt-2 font-bold uppercase tracking-widest">Putri Bapak Karjoni & Ibu Masroh</p>
                     </div>
                 </div>
             </section>
 
-            <!-- Acara -->
             <section class="py-20 px-8 reveal bg-[#1e3a8a] text-white rounded-t-[50px] border-t-4 border-[#D4AF37]">
                 <h2 class="font-serif text-2xl font-bold mb-12 text-center gold-text uppercase tracking-widest">Waktu & Lokasi</h2>
                 
@@ -359,7 +378,6 @@
                         <p class="text-sm font-bold mb-4">Minggu, 5 Juli 2026 | 11.00 WIB</p>
                         <p class="text-[10px] leading-relaxed italic mb-6">Gn. Batu, Margoyoso, Kab. Tanggamus, Lampung</p>
                         
-                        <!-- Google Maps Embed -->
                         <div class="map-container mb-6">
                             <iframe 
                                 src="https://maps.google.com/maps?q=-5.317091131630078,104.70587399736353&z=15&output=embed" 
@@ -371,7 +389,6 @@
                     </div>
                 </div>
 
-                <!-- Countdown Section -->
                 <div class="text-center">
                     <p class="text-[10px] tracking-[0.4em] uppercase mb-6 text-[#D4AF37]">Menuju Hari Bahagia</p>
                     <div id="countdown-display" class="grid grid-cols-4 gap-2 max-w-xs mx-auto">
@@ -395,7 +412,6 @@
                 </div>
             </section>
 
-            <!-- Hadiah Digital -->
             <section class="py-20 px-8 reveal text-center bg-gray-50">
                 <h2 class="font-serif text-xl font-bold mb-4 text-[#1e3a8a] tracking-widest uppercase text-center">Digital Gift</h2>
                 <p class="text-[10px] text-gray-500 mb-10 leading-relaxed text-center">Doa restu Anda merupakan hadiah terindah, namun jika Anda ingin memberikan tanda kasih lainnya, silakan melalui rekening berikut:</p>
@@ -410,7 +426,6 @@
                 </div>
             </section>
 
-            <!-- Ucapan -->
             <section class="py-20 px-8 reveal bg-white">
                 <h2 class="font-serif text-xl font-bold mb-8 text-center text-[#1e3a8a] tracking-widest uppercase">Ucapan & Doa</h2>
                 <div class="space-y-3 mb-12 bg-gray-50 p-6 rounded-[32px]">
@@ -425,7 +440,6 @@
                 <div id="wish-list"></div>
             </section>
 
-            <!-- Footer -->
             <footer class="py-24 text-center bg-[#1e3a8a] text-white border-t-8 border-[#D4AF37]">
                 <p onclick="handleFooterClick()" class="font-accent text-5xl mb-4 gold-text cursor-pointer select-none">Yudha & Imas</p>
                 <p class="text-[9px] tracking-[0.4em] uppercase opacity-50 italic">Terima Kasih</p>
