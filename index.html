@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Undangan Pernikahan Yudha & Imas</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Great+Vibes&family=Montserrat:wght@300;400;600&display=swap" rel="stylesheet">
+    
+    <!-- Firebase SDK -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getFirestore, collection, addDoc, onSnapshot, query, serverTimestamp, deleteDoc, doc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyCJsWRcaU68uvVROQqs3ZzVe512r2dm1-o",
+            authDomain: "wedding-yudha3726.firebaseapp.com",
+            projectId: "wedding-yudha3726",
+            storageBucket: "wedding-yudha3726.firebasestorage.app",
+            messagingSenderId: "153494321164",
+            appId: "1:153494321164:web:31ec01cc2a62eb0512d629",
+            measurementId: "G-EPG69TGD2V"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const auth = getAuth(app);
+        const weddingAppId = "wedding-yudha3726"; 
+
+        let currentUser = null;
+        let unsubscribeWishes = null;
+        let isAdminView = false;
+
+        const urlParams = new URLSearchParams(window.location.search);
+        const guestName = urlParams.get('to');
+
+        async function initAuth() {
+            try {
+                await signInAnonymously(auth);
+            } catch (err) { console.error("Auth Error:", err); }
+            onAuthStateChanged(auth, (user) => {
+                if (user) {
+                    currentUser = user;
+                    setupFirestoreListeners();
+                    if (guestName) {
+                        const guestEl = document.getElementById('guest-target');
+                        if (guestEl) guestEl.innerText = guestName;
+                    }
+                }
+            });
+        }
+
+        function setupFirestoreListeners() {
+            if (!currentUser) return;
+            if (unsubscribeWishes) unsubscribeWishes();
+            const wishesCol = collection(db, 'artifacts', weddingAppId, 'public', 'data', 'wishes');
+            const q = query(wishesCol);
+            unsubscribeWishes = onSnapshot(q, (snapshot) => {
+                const wishes = [];
+                snapshot.forEach((doc) => { wishes.push({ id: doc.id, ...doc.data() }); });
+                wishes.sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
+                renderWishes(wishes);
+                renderAdminWishes(wishes);
+            }, (error) => { console.error("Firestore Error:", error); });
+        }
+
+        function renderWishes(wishes) {
+            const list = document.getElementById('wish-list');
+            if (!list) return;
+            list.innerHTML = '';
+            wishes.forEach((data) => {
+                const item = `
+                    <div class="p-5 mb-4 bg-white border-l-4 border-[#D4AF37] shadow-sm rounded-r-2xl animate__animated animate__fadeInUp">
+                        <p class="font-bold text-[#1e3a8a] text-sm">${data.name || 'Tamu Undangan'} 
+                        <span class="text-[10px] font-normal text-[#D4AF37] ml-2 uppercase tracking-wider">${data.status || 'Hadir'}</span></p>
+                        <p class="text-gray-600 mt-2 italic text-xs leading-relaxed">"${data.message || ''}"</p>
+                    </div>`;
+                list.insertAdjacentHTML('beforeend', item);
+            });
+        }
+
+        function renderAdminWishes(wishes) {
+            const adminList = document.getElementById('admin-wish-list');
+            if (!adminList) return;
+            adminList.innerHTML = '';
+            wishes.forEach((data) => {
+                const row = `
+                    <div class="p-4 border-b border-gray-100 flex justify-between items-start gap-4">
+                        <div class="flex-1 text-left">
+                            <p class="font-bold text-[#1e3a8a] text-xs">${data.name} (${data.status})</p>
+                            <p class="text-[10px] text-gray-500 italic">"${data.message}"</p>
+                        </div>
+                        <button onclick="deleteWish('${data.id}')" class="text-red-500 p-2"><svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg></button>
+                    </div>`;
+                adminList.insertAdjacentHTML('beforeend', row);
+            });
+        }
+
+        window.deleteWish = async (id) => {
+            if (!confirm("Hapus ucapan ini?")) return;
+            try {
+                await deleteDoc(doc(db, 'artifacts', weddingAppId, 'public', 'data', 'wishes', id));
+                window.showToast("Terhapus");
+            } catch (e) { window.showToast("Gagal"); }
+        };
+
+        window.sendWish = async () => {
+            const nameEl = document.getElementById('guest-name-input');
+            const msgEl = document.getElementById('guest-msg-input');
+            const statusEl = document.getElementById('guest-status-input');
+            if(!nameEl.value || !msgEl.value) { window.showToast("Isi nama & pesan"); return; }
+            try {
+                const wishesCol = collection(db, 'artifacts', weddingAppId, 'public', 'data', 'wishes');
+                await addDoc(wishesCol, { name: nameEl.value, message: msgEl.value, status: statusEl.value, timestamp: serverTimestamp() });
+                nameEl.value = ''; msgEl.value = '';
+                window.showToast("Terkirim!");
+            } catch (e) { window.showToast("Gagal kirim"); }
+        };
+
+        // Salin Rekening
+        window.copyText = (id) => {
+            const text = document.getElementById(id).innerText;
+            const el = document.createElement('textarea');
+            el.value = text;
+            document.body.appendChild(el);
+            el.select();
+            document.execCommand('copy');
+            document.body.removeChild(el);
+            window.showToast("Nomor Rekening Disalin");
+        };
+
+        let clickCount = 0;
+        let lastClickTime = 0;
+        window.handleFooterClick = () => {
+            const now = Date.now();
+            if (now - lastClickTime > 1000) clickCount = 0; 
+            clickCount++;
+            lastClickTime = now;
+            if (clickCount === 5) { clickCount = 0; toggleAdminPage(); }
+        };
+
+        function toggleAdminPage() {
+            const main = document.getElementById('main-invitation-container');
+            const admin = document.getElementById('admin-page');
+            if (!isAdminView) {
+                main.classList.add('hidden');
+                admin.classList.remove('hidden');
+                window.scrollTo(0, 0);
+            } else {
+                admin.classList.add('hidden');
+                main.classList.remove('hidden');
+            }
+            isAdminView = !isAdminView;
+        }
+
+        // COUNTDOWN LOGIC
+        function updateAllCountdowns() {
+            const targetDate = new Date("July 5, 2026 11:00:00").getTime();
+            
+            const timer = setInterval(() => {
+                const now = new Date().getTime();
+                const distance = targetDate - now;
+
+                if (distance < 0) {
+                    clearInterval(timer);
+                    const msg = "<p class='col-span-4 font-bold text-[#D4AF37] text-[10px]'>ACARA SEDANG BERLANGSUNG</p>";
+                    const ids = ["countdown-display", "hero-countdown-display", "overlay-countdown-display"];
+                    ids.forEach(id => {
+                        const el = document.getElementById(id);
+                        if (el) el.innerHTML = msg;
+                    });
+                    return;
+                }
+
+                const days = Math.floor(distance / (1000 * 60 * 60 * 24));
+                const hours = Math.floor((distance % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+                const minutes = Math.floor((distance % (1000 * 60 * 60)) / (1000 * 60));
+                const seconds = Math.floor((distance % (1000 * 60)) / 1000);
+
+                // Update Main Section
+                if(document.getElementById("cd-days")) document.getElementById("cd-days").innerText = days;
+                if(document.getElementById("cd-hours")) document.getElementById("cd-hours").innerText = hours;
+                if(document.getElementById("cd-minutes")) document.getElementById("cd-minutes").innerText = minutes;
+                if(document.getElementById("cd-seconds")) document.getElementById("cd-seconds").innerText = seconds;
+
+                // Update Hero Section
+                if(document.getElementById("h-cd-days")) document.getElementById("h-cd-days").innerText = days;
+                if(document.getElementById("h-cd-hours")) document.getElementById("h-cd-hours").innerText = hours;
+                if(document.getElementById("h-cd-minutes")) document.getElementById("h-cd-minutes").innerText = minutes;
+                if(document.getElementById("h-cd-seconds")) document.getElementById("h-cd-seconds").innerText = seconds;
+
+                // Update Overlay Section
+                if(document.getElementById("ov-cd-days")) document.getElementById("ov-cd-days").innerText = days;
+                if(document.getElementById("ov-cd-hours")) document.getElementById("ov-cd-hours").innerText = hours;
+                if(document.getElementById("ov-cd-minutes")) document.getElementById("ov-cd-minutes").innerText = minutes;
+                if(document.getElementById("ov-cd-seconds")) document.getElementById("ov-cd-seconds").innerText = seconds;
+            }, 1000);
+        }
+
+        window.closeAdmin = () => toggleAdminPage();
+        window.onload = () => {
+            initAuth();
+            updateAllCountdowns();
+        };
+    </script>
+
+    <style>
+        :root { --primary: #1e3a8a; --secondary: #fdfcf6; --gold: #D4AF37; --gold-light: #f4e8c1; }
+        body { background-color: var(--secondary); font-family: 'Montserrat', sans-serif; color: #1e293b; overflow-x: hidden; }
+        .font-serif { font-family: 'Playfair Display', serif; }
+        .font-accent { font-family: 'Great Vibes', cursive; }
+        .glass { background: rgba(255, 255, 255, 0.85); backdrop-filter: blur(10px); border: 1px solid var(--gold-light); }
+        .btn-gold { background: linear-gradient(135deg, #bf953f 0%, #fcf6ba 45%, #b38728 100%); color: #1e3a8a; }
+        .btn-primary { background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%); color: white; }
+        .reveal { opacity: 0; transform: translateY(30px); transition: all 1s ease-out; }
+        .reveal.active { opacity: 1; transform: translateY(0); }
+        .gold-text { background: linear-gradient(to right, #bf953f, #fcf6ba, #b38728, #fbf5b7, #aa771c); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .particle { position: absolute; background: radial-gradient(circle, #fcf6ba 0%, #bf953f 100%); border-radius: 50%; opacity: 0.6; animation: fall linear infinite; }
+        @keyframes fall { 0% { transform: translateY(-10vh); opacity: 0; } 10% { opacity: 0.8; } 100% { transform: translateY(110vh); opacity: 0; } }
+        
+        .map-container { position: relative; padding-bottom: 56.25%; height: 0; overflow: hidden; border-radius: 24px; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1); border: 4px solid white; }
+        .map-container iframe { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+
+        .cd-box { background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(212, 175, 55, 0.3); }
+        .hero-cd-box { background: rgba(212, 175, 55, 0.1); border: 1px solid rgba(212, 175, 55, 0.2); }
+        .overlay-cd-box { background: rgba(30, 58, 138, 0.05); border: 1px solid rgba(30, 58, 138, 0.1); }
+    </style>
+</head>
+<body>
+
+    <div id="gold-particles" class="fixed inset-0 pointer-events-none z-10"></div>
+
+    <!-- Welcome Overlay -->
+    <div id="welcome-overlay" class="fixed inset-0 z-[2000] bg-[#1e3a8a] flex items-center justify-center p-6 text-center">
+        <div class="relative glass p-10 rounded-[40px] max-w-sm w-full shadow-2xl border-2 border-[#D4AF37]">
+            <p class="text-[9px] tracking-[0.4em] text-[#1e3a8a]/60 uppercase font-bold mb-1">Undangan Pernikahan</p>
+            <p class="text-[10px] font-medium tracking-[0.1em] text-[#D4AF37] mb-4">Minggu, 05 Juli 2026</p>
+            
+            <h1 class="font-accent text-6xl text-[#1e3a8a] mb-2">Yudha & Imas</h1>
+            
+            <!-- Overlay Countdown -->
+            <div id="overlay-countdown-display" class="flex justify-center gap-3 mb-8">
+                <div class="overlay-cd-box px-2 py-1 rounded-lg">
+                    <span id="ov-cd-days" class="block text-sm font-bold text-[#1e3a8a]">0</span>
+                    <span class="text-[7px] uppercase tracking-tighter text-gray-400">Hari</span>
+                </div>
+                <div class="overlay-cd-box px-2 py-1 rounded-lg">
+                    <span id="ov-cd-hours" class="block text-sm font-bold text-[#1e3a8a]">0</span>
+                    <span class="text-[7px] uppercase tracking-tighter text-gray-400">Jam</span>
+                </div>
+                <div class="overlay-cd-box px-2 py-1 rounded-lg">
+                    <span id="ov-cd-minutes" class="block text-sm font-bold text-[#1e3a8a]">0</span>
+                    <span class="text-[7px] uppercase tracking-tighter text-gray-400">Menit</span>
+                </div>
+                <div class="overlay-cd-box px-2 py-1 rounded-lg">
+                    <span id="ov-cd-seconds" class="block text-sm font-bold text-[#1e3a8a]">0</span>
+                    <span class="text-[7px] uppercase tracking-tighter text-gray-400">Detik</span>
+                </div>
+            </div>
+
+            <div class="mb-10 text-[#1e3a8a]">
+                <p class="text-[10px] text-gray-400 mb-2 uppercase tracking-widest">Kepada Yth.</p>
+                <p id="guest-target" class="font-serif text-xl font-bold uppercase">Tamu Undangan</p>
+            </div>
+            
+            <button onclick="openInvitation()" class="btn-gold w-full py-4 rounded-full font-bold text-xs tracking-widest shadow-xl transition-all active:scale-95">BUKA UNDANGAN</button>
+        </div>
+    </div>
+
+    <!-- ADMIN PAGE -->
+    <div id="admin-page" class="hidden min-h-screen bg-gray-100 z-[3000] relative animate__animated animate__fadeIn">
+        <nav class="bg-[#1e3a8a] text-white p-6 sticky top-0 flex justify-between items-center shadow-xl">
+            <h2 class="font-bold">Panel Admin</h2>
+            <button onclick="closeAdmin()" class="bg-white/10 p-2 rounded-full">Tutup</button>
+        </nav>
+        <div class="p-6 max-w-md mx-auto">
+            <div id="admin-wish-list" class="bg-white rounded-3xl shadow-sm border border-gray-200 divide-y divide-gray-50 overflow-hidden">
+                <!-- Data Admin Injected Here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- MAIN CONTENT -->
+    <div id="main-invitation-container">
+        <div id="main-content" class="max-w-md mx-auto relative bg-white min-h-screen shadow-2xl">
+            <!-- Hero (Sama dengan Welcome Overlay untuk transisi halus) -->
+            <section class="h-[100vh] flex flex-col items-center justify-center px-6 bg-[#1e3a8a] text-center relative overflow-hidden">
+                <div class="animate__animated animate__fadeInDown animate__slow">
+                    <p class="text-[9px] tracking-[0.5em] text-[#D4AF37] uppercase font-bold mb-2">Undangan Pernikahan</p>
+                    <p class="text-[11px] font-medium tracking-[0.2em] text-white/80 mb-6 italic">Minggu, 05 Juli 2026</p>
+                </div>
+                
+                <span class="text-[10px] tracking-[0.6em] text-[#D4AF37] uppercase font-bold mb-4 block animate__animated animate__fadeIn">Walimatul 'Ursy</span>
+                <h1 class="font-accent text-7xl text-white mb-8 gold-text animate__animated animate__zoomIn">Yudha & Imas</h1>
+                
+                <!-- Mini Hero Countdown -->
+                <div id="hero-countdown-display" class="grid grid-cols-4 gap-3 max-w-[280px] mx-auto animate__animated animate__fadeInUp animate__delay-1s">
+                    <div class="hero-cd-box p-2 rounded-xl">
+                        <span id="h-cd-days" class="block font-serif text-lg font-bold text-[#D4AF37]">0</span>
+                        <span class="text-[7px] uppercase tracking-widest text-white/50">Hari</span>
+                    </div>
+                    <div class="hero-cd-box p-2 rounded-xl">
+                        <span id="h-cd-hours" class="block font-serif text-lg font-bold text-[#D4AF37]">0</span>
+                        <span class="text-[7px] uppercase tracking-widest text-white/50">Jam</span>
+                    </div>
+                    <div class="hero-cd-box p-2 rounded-xl">
+                        <span id="h-cd-minutes" class="block font-serif text-lg font-bold text-[#D4AF37]">0</span>
+                        <span class="text-[7px] uppercase tracking-widest text-white/50">Mnt</span>
+                    </div>
+                    <div class="hero-cd-box p-2 rounded-xl">
+                        <span id="h-cd-seconds" class="block font-serif text-lg font-bold text-[#D4AF37]">0</span>
+                        <span class="text-[7px] uppercase tracking-widest text-white/50">Dtk</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Quotes & Kata Pembuka -->
+            <section class="py-20 px-8 text-center reveal">
+                <div class="p-10 rounded-[40px] bg-white shadow-xl border border-[#D4AF37]/20">
+                    <p class="font-serif italic text-[#1e3a8a] text-sm mb-6 leading-relaxed">"Dan di antara tanda-tanda-Nya ialah Dia menciptakan pasangan-pasangan untukmu agar kamu merasa tenteram..."</p>
+                    <p class="text-[10px] font-bold text-[#D4AF37] uppercase tracking-widest mb-10">— QS. Ar-Rum: 21</p>
+                    
+                    <!-- Kata Pembuka -->
+                    <div class="space-y-4 pt-4 border-t border-gray-100">
+                        <p class="text-[10px] font-bold text-[#1e3a8a] uppercase tracking-[0.2em]">Assalamu’alaikum Warahmatullahi Wabarakatuh</p>
+                        <p class="text-xs text-gray-600 leading-relaxed">Maha Suci Allah yang telah menciptakan mahluk-Nya berpasang-pasangan. Dengan memohon rahmat dan ridho Allah SWT, kami bermaksud mengundang Bapak/Ibu/Saudara/i untuk menghadiri acara pernikahan kami:</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Mempelai -->
+            <section class="py-20 px-8 text-center reveal">
+                <div class="space-y-12">
+                    <div>
+                        <h2 class="font-accent text-5xl text-[#1e3a8a]">Yudha Nugroho</h2>
+                        <p class="text-[10px] text-gray-500 mt-2 font-bold uppercase tracking-widest">Putra Bapak Sunarto & Ibu Supriyani</p>
+                    </div>
+                    <div class="font-accent text-3xl text-[#D4AF37]">&</div>
+                    <div>
+                        <h2 class="font-accent text-5xl text-[#1e3a8a]">Siti Masliyah</h2>
+                        <p class="text-[10px] text-gray-500 mt-2 font-bold uppercase tracking-widest">Putri Bapak Ahmad & Ibu Siti Masliyah</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Acara -->
+            <section class="py-20 px-8 reveal bg-[#1e3a8a] text-white rounded-t-[50px] border-t-4 border-[#D4AF37]">
+                <h2 class="font-serif text-2xl font-bold mb-12 text-center gold-text uppercase tracking-widest">Waktu & Lokasi</h2>
+                
+                <div class="space-y-6 text-center mb-16">
+                    <div class="border border-[#D4AF37]/40 p-6 rounded-3xl">
+                        <h3 class="font-bold text-[#D4AF37] mb-2 uppercase">AKAD NIKAH</h3>
+                        <p class="text-sm font-light">Jumat, 3 Juli 2026 | 09.00 WIB</p>
+                    </div>
+                    <div class="bg-white text-[#1e3a8a] p-8 rounded-3xl border-2 border-[#D4AF37] shadow-xl">
+                        <h3 class="font-bold mb-2 uppercase">RESEPSI</h3>
+                        <p class="text-sm font-bold mb-4">Minggu, 5 Juli 2026 | 11.00 WIB</p>
+                        <p class="text-[10px] leading-relaxed italic mb-6">Gn. Batu, Margoyoso, Kab. Tanggamus, Lampung</p>
+                        
+                        <!-- Google Maps Embed -->
+                        <div class="map-container mb-6">
+                            <iframe 
+                                src="https://maps.google.com/maps?q=-5.317091131630078,104.70587399736353&z=15&output=embed" 
+                                frameborder="0" style="border:0;" allowfullscreen="" aria-hidden="false" tabindex="0">
+                            </iframe>
+                        </div>
+
+                        <a href="https://www.google.com/maps/dir/?api=1&destination=-5.317091131630078,104.70587399736353" target="_blank" class="inline-block btn-primary px-8 py-3 rounded-full text-[10px] font-bold uppercase tracking-widest shadow-md">Buka Google Maps</a>
+                    </div>
+                </div>
+
+                <!-- Countdown Section -->
+                <div class="text-center">
+                    <p class="text-[10px] tracking-[0.4em] uppercase mb-6 text-[#D4AF37]">Menuju Hari Bahagia</p>
+                    <div id="countdown-display" class="grid grid-cols-4 gap-2 max-w-xs mx-auto">
+                        <div class="cd-box py-3 rounded-2xl">
+                            <span id="cd-days" class="block font-serif text-2xl font-bold text-[#D4AF37]">0</span>
+                            <span class="text-[8px] uppercase tracking-widest opacity-60">Hari</span>
+                        </div>
+                        <div class="cd-box py-3 rounded-2xl">
+                            <span id="cd-hours" class="block font-serif text-2xl font-bold text-[#D4AF37]">0</span>
+                            <span class="text-[8px] uppercase tracking-widest opacity-60">Jam</span>
+                        </div>
+                        <div class="cd-box py-3 rounded-2xl">
+                            <span id="cd-minutes" class="block font-serif text-2xl font-bold text-[#D4AF37]">0</span>
+                            <span class="text-[8px] uppercase tracking-widest opacity-60">Menit</span>
+                        </div>
+                        <div class="cd-box py-3 rounded-2xl">
+                            <span id="cd-seconds" class="block font-serif text-2xl font-bold text-[#D4AF37]">0</span>
+                            <span class="text-[8px] uppercase tracking-widest opacity-60">Detik</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Hadiah Digital -->
+            <section class="py-20 px-8 reveal text-center bg-gray-50">
+                <h2 class="font-serif text-xl font-bold mb-4 text-[#1e3a8a] tracking-widest uppercase text-center">Digital Gift</h2>
+                <p class="text-[10px] text-gray-500 mb-10 leading-relaxed text-center">Doa restu Anda merupakan hadiah terindah, namun jika Anda ingin memberikan tanda kasih lainnya, silakan melalui rekening berikut:</p>
+                
+                <div class="max-w-xs mx-auto">
+                    <div class="bg-white p-8 rounded-[40px] shadow-sm border border-gray-100">
+                        <p class="font-bold text-gray-400 text-[10px] mb-6 uppercase tracking-[0.3em]">Bank BSI</p>
+                        <p id="rek-utama" class="font-bold text-[#1e3a8a] text-2xl tracking-widest mb-2">7267546438</p>
+                        <p class="text-[10px] text-gray-500 mb-8 font-medium">a.n Yudha Nugroho</p>
+                        <button onclick="copyText('rek-utama')" class="w-full text-[10px] font-bold text-[#D4AF37] border-2 border-[#D4AF37] py-3 rounded-full uppercase tracking-widest hover:bg-[#D4AF37] hover:text-white transition-all transform active:scale-95">Salin Nomor Rekening</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Ucapan -->
+            <section class="py-20 px-8 reveal bg-white">
+                <h2 class="font-serif text-xl font-bold mb-8 text-center text-[#1e3a8a] tracking-widest uppercase">Ucapan & Doa</h2>
+                <div class="space-y-3 mb-12 bg-gray-50 p-6 rounded-[32px]">
+                    <input id="guest-name-input" type="text" placeholder="Nama" class="w-full p-4 rounded-2xl border-none text-[11px] outline-none shadow-sm">
+                    <select id="guest-status-input" class="w-full p-4 rounded-2xl border-none text-[11px] outline-none shadow-sm">
+                        <option>Hadir</option>
+                        <option>Berhalangan</option>
+                    </select>
+                    <textarea id="guest-msg-input" placeholder="Tulis doa..." class="w-full p-4 rounded-2xl border-none text-[11px] outline-none shadow-sm" rows="3"></textarea>
+                    <button onclick="sendWish()" class="btn-primary w-full py-4 rounded-full font-bold text-[10px] uppercase tracking-widest shadow-lg">Kirim</button>
+                </div>
+                <div id="wish-list"></div>
+            </section>
+
+            <!-- Footer -->
+            <footer class="py-24 text-center bg-[#1e3a8a] text-white border-t-8 border-[#D4AF37]">
+                <p onclick="handleFooterClick()" class="font-accent text-5xl mb-4 gold-text cursor-pointer select-none">Yudha & Imas</p>
+                <p class="text-[9px] tracking-[0.4em] uppercase opacity-50 italic">Terima Kasih</p>
+            </footer>
+        </div>
+    </div>
+
+    <script>
+        window.showToast = (text) => {
+            const tip = document.createElement('div');
+            tip.innerText = text;
+            tip.className = "fixed bottom-10 left-1/2 -translate-x-1/2 bg-gray-900 text-white px-6 py-2 rounded-full z-[5000] text-[10px] font-bold animate__animated animate__fadeInUp shadow-2xl";
+            document.body.appendChild(tip);
+            setTimeout(() => {
+                tip.classList.replace('animate__fadeInUp', 'animate__fadeOutDown');
+                setTimeout(() => tip.remove(), 1000);
+            }, 2500);
+        };
+
+        window.openInvitation = () => {
+            document.getElementById('welcome-overlay').classList.add('animate__animated', 'animate__fadeOutUp');
+            setTimeout(() => {
+                document.getElementById('welcome-overlay').style.display = 'none';
+                reveal();
+                createParticles();
+            }, 800);
+        };
+
+        function createParticles() {
+            const container = document.getElementById('gold-particles');
+            for (let i = 0; i < 20; i++) {
+                const p = document.createElement('div');
+                p.className = 'particle';
+                const size = Math.random() * 3 + 2;
+                p.style.width = size + 'px';
+                p.style.height = size + 'px';
+                p.style.left = Math.random() * 100 + 'vw';
+                p.style.animationDuration = (Math.random() * 5 + 5) + 's';
+                p.style.animationDelay = (Math.random() * 5) + 's';
+                container.appendChild(p);
+            }
+        }
+
+        function reveal() {
+            document.querySelectorAll(".reveal").forEach(el => {
+                const rect = el.getBoundingClientRect();
+                if (rect.top < window.innerHeight - 50) el.classList.add("active");
+            });
+        }
+        window.addEventListener("scroll", reveal);
+    </script>
+</body>
+</html>
